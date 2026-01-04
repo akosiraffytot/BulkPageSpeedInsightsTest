@@ -45,8 +45,8 @@ A powerful web application built with Next.js that analyzes website performance 
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd site-psi-scanner
+git clone https://github.com/akosiraffytot/BulkPageSpeedInsightsTest.git
+cd BulkPageSpeedInsightsTest
 ```
 
 2. Install dependencies:
@@ -92,7 +92,7 @@ pnpm dev
 ## 📁 Project Structure
 
 ```
-site-psi-scanner/
+BulkPageSpeedInsightsTest/
 ├── app/
 │   ├── api/
 │   │   ├── pagespeed/
