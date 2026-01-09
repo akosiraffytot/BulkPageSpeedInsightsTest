@@ -8,6 +8,12 @@ A powerful web application built with Next.js that analyzes website performance 
 
 ## ✨ Features
 
+### 🔗 Flexible URL Input
+- **Sitemap Mode**: Parse XML sitemaps to extract all page URLs
+- **Manual Mode**: Enter URLs directly via textarea (comma or newline-separated)
+- Tabbed interface for easy switching between input modes
+- Auto-validation and deduplication of URLs
+
 ### 🔍 Sitemap Scanning
 - Parse XML sitemaps to extract all page URLs
 - Support for insecure HTTPS connections (self-signed/expired certificates)
@@ -27,6 +33,12 @@ A powerful web application built with Next.js that analyzes website performance 
 - Stop scan functionality with confirmation
 - Progress tracking with completed/failed/remaining counts
 - Browser reload protection during active scans
+
+### 🔄 Error Recovery
+- **Global Rescan**: "Rescan Errors" button to retry all failed URLs at once
+- **Individual Retry**: Retry button next to each error status for granular control
+- Preserves successful scan results during error rescans
+- Smart result merging - only updates rescanned URLs
 
 ### 💾 Export Capabilities
 - **JSON Export**: Structured data for programmatic analysis
@@ -71,6 +83,8 @@ pnpm dev
 
 ## 📖 Usage
 
+### Method 1: From Sitemap
+
 1. **Enter Sitemap URL**: Provide the URL to your XML sitemap
 2. **Add API Key**: Enter your Google PageSpeed Insights API key
 3. **Optional**: Check "Allow insecure HTTPS connections" if your sitemap uses self-signed certificates
@@ -79,6 +93,16 @@ pnpm dev
 6. **Start Performance Scan**: Begin the analysis (scans run sequentially with 3-second delays)
 7. **View Results**: See real-time results with scores, metrics, and issues
 8. **Export**: Download results as JSON or HTML when scanning completes
+
+### Method 2: Manual URLs
+
+1. **Switch to Manual URLs Tab**: Click the "Manual URLs" tab
+2. **Add API Key**: Enter your Google PageSpeed Insights API key
+3. **Enter URLs**: Add URLs in the textarea (one per line or comma-separated)
+4. **Start Performance Scan**: Click to begin - scanning starts immediately (no URL selection step)
+5. **View Results**: See real-time results with device scanning indicators
+6. **Retry Failed Scans**: Use global "Rescan Errors" or individual retry buttons
+7. **Export**: Download results as JSON or HTML when scanning completes
 
 ## 🛠️ Tech Stack
 
@@ -203,6 +227,45 @@ This project is open source and available under the MIT License.
 ## 💖 Credits
 
 Built using [Qoder](https://qoder.com/referral?referral_code=1h8QowRIQ5YLknq8XJslQPkJtNEBi24v)
+
+## 📋 Changelog
+
+### Version 2.0.0 (January 2026)
+
+#### 🎉 New Features
+- **Dual Input Mode System**: Added tabbed interface for choosing between Sitemap and Manual URL entry
+- **Manual URL Input**: New textarea-based URL input supporting comma or newline separation
+- **Streamlined Manual Workflow**: Manual mode skips URL selection and starts scanning immediately
+- **Auto-scroll Navigation**: Automatic smooth scrolling to relevant sections after button clicks
+- **Global Error Rescan**: "Rescan Errors" button to retry all failed URLs in one action
+- **Individual URL Retry**: Retry button next to each error status for precise control
+- **Device Scanning Indicator**: Real-time visual indicator showing which device (Mobile/Desktop) is being analyzed
+- **Smart Result Preservation**: Error rescans now preserve successful results instead of clearing them
+
+#### 🐛 Bug Fixes
+- Fixed issue where rescanning errors would clear all successful scan results
+- Improved result merging logic to only update URLs being rescanned
+
+#### 🎨 UI/UX Improvements
+- Updated button labels for clarity ("Start Performance Scan" for manual mode)
+- Added pulsing arrow animation for device scanning indicator
+- Conditional URL selection display (only shown for sitemap mode)
+- Enhanced visual feedback during scanning process
+
+#### 🔧 Technical Improvements
+- Refactored scan function to use URL-based result matching instead of index-based
+- Improved state management for dual input modes
+- Added `currentScanDevice` state for precise device tracking
+- Enhanced `startPerformanceScanWithUrls` to preserve existing results
+
+### Version 1.0.0 (December 2025)
+- Initial release with sitemap scanning
+- Lighthouse score analysis
+- Core Web Vitals metrics
+- Dual device support (Mobile/Desktop)
+- JSON and HTML export functionality
+- Rate limiting protection
+- Browser reload protection
 
 ## 🔗 Links
 

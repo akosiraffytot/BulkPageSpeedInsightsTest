@@ -59,11 +59,18 @@ export default function Home() {
   const [debugInfo, setDebugInfo] = useState<any>(null);
   const [allowInsecure, setAllowInsecure] = useState(false);
   const [scannedSitemapUrl, setScannedSitemapUrl] = useState('');
+  const [urlInputMode, setUrlInputMode] = useState<'sitemap' | 'manual'>('sitemap');
+  const [manualUrlsInput, setManualUrlsInput] = useState('');
+  
+  // Refs for scrolling
+  const urlSelectionRef = useRef<HTMLDivElement>(null);
+  const scanResultsRef = useRef<HTMLDivElement>(null);
   
   // Scanning state
   const [isScanning, setIsScanning] = useState(false);
   const [scanResults, setScanResults] = useState<ScanResult[]>([]);
   const [currentScanIndex, setCurrentScanIndex] = useState<number | null>(null);
+  const [currentScanDevice, setCurrentScanDevice] = useState<'mobile' | 'desktop' | null>(null);
   const stopScanningRef = useRef(false);
 
   // Load API key from session storage on mount
@@ -156,6 +163,11 @@ export default function Home() {
       setUrls(urlItems);
       setScannedSitemapUrl(sitemapUrl);
       console.log(`Extracted ${urlItems.length} URLs from sitemap`);
+      
+      // Scroll to URL selection section
+      setTimeout(() => {
+        urlSelectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
     } catch (err) {
       console.error('Error parsing sitemap:', err);
       const errorMessage = err instanceof Error 
@@ -195,6 +207,79 @@ export default function Home() {
     setAllowInsecure(checked);
     // Save to localStorage for persistence
     localStorage.setItem('psi_allow_insecure', checked.toString());
+  };
+
+  const parseManualUrls = (value: string): string[] => {
+    return Array.from(
+      new Set(
+        value
+          .split(/[\n,]+/)
+          .map((u) => u.trim())
+          .filter(Boolean)
+      )
+    );
+  };
+
+  const handleManualUrlsSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!apiKey.trim()) {
+      alert('Please provide your Google PageSpeed Insights API key');
+      return;
+    }
+
+    if (!manualUrlsInput.trim()) {
+      alert('Please enter at least one URL');
+      return;
+    }
+
+    const parsedUrls = parseManualUrls(manualUrlsInput);
+    if (parsedUrls.length === 0) {
+      alert('No valid URLs found. Please check your input.');
+      return;
+    }
+
+    // If there are existing scan results, confirm before resetting
+    if (scanResults.length > 0) {
+      const hasCompletedScans = scanResults.some(r => r.status === 'completed');
+      const message = hasCompletedScans
+        ? 'You have existing scan results. We recommend exporting them as HTML or JSON before loading a new URL list.\n\nAre you sure you want to continue? This will clear all current results.'
+        : 'Are you sure you want to load a new URL list? This will clear all current results.';
+
+      const confirmed = window.confirm(message);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setError(null);
+    setDebugInfo(null);
+    setScanResults([]);
+    setCurrentScanIndex(null);
+
+    const urlItems: UrlItem[] = parsedUrls.map((url) => ({
+      url,
+      selected: true,
+    }));
+
+    setUrls(urlItems);
+    setScannedSitemapUrl('Manual URLs');
+
+    // Automatically start performance scan for manual URLs
+    setTimeout(() => {
+      // Initialize scan results for manual URLs
+      const initialResults: ScanResult[] = urlItems.map(item => ({
+        url: item.url,
+        status: 'pending' as ScanStatus,
+      }));
+      setScanResults(initialResults);
+      
+      startPerformanceScanWithUrls(urlItems);
+      // Scroll to scan results section
+      setTimeout(() => {
+        scanResultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 200);
+    }, 100);
   };
 
   const toggleUrlSelection = (index: number) => {
@@ -243,35 +328,49 @@ export default function Home() {
       return;
     }
 
-    setIsScanning(true);
-    stopScanningRef.current = false;
-    setCurrentScanIndex(0);
-
-    // Initialize scan results
+    // Initialize scan results for first time
     const initialResults: ScanResult[] = selectedUrls.map(item => ({
       url: item.url,
       status: 'pending' as ScanStatus,
     }));
     setScanResults(initialResults);
 
+    // Scroll to scan results section
+    setTimeout(() => {
+      scanResultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+
+    await startPerformanceScanWithUrls(selectedUrls);
+  };
+
+  const startPerformanceScanWithUrls = async (urlsToScan: UrlItem[]) => {
+    setIsScanning(true);
+    stopScanningRef.current = false;
+
     // Scan each URL sequentially
-    for (let i = 0; i < selectedUrls.length; i++) {
+    for (let i = 0; i < urlsToScan.length; i++) {
       if (stopScanningRef.current) {
         console.log('Scan stopped by user');
         break;
       }
 
-      setCurrentScanIndex(i);
-      const urlItem = selectedUrls[i];
+      const urlItem = urlsToScan[i];
+      
+      // Find the index in scanResults for this URL
+      const resultIndex = scanResults.findIndex(r => r.url === urlItem.url);
+      if (resultIndex === -1) continue;
+
+      setCurrentScanIndex(resultIndex);
 
       // Update status to scanning
       setScanResults(prev => prev.map((result, idx) =>
-        idx === i ? { ...result, status: 'scanning' } : result
+        idx === resultIndex ? { ...result, status: 'scanning' } : result
       ));
 
       try {
         // Scan mobile
         console.log(`Scanning ${urlItem.url} (mobile)...`);
+        setCurrentScanDevice('mobile');
         const mobileResult = await scanUrl(urlItem.url, 'mobile');
 
         // Wait 3 seconds before desktop scan
@@ -281,26 +380,28 @@ export default function Home() {
 
         // Scan desktop
         console.log(`Scanning ${urlItem.url} (desktop)...`);
+        setCurrentScanDevice('desktop');
         const desktopResult = await scanUrl(urlItem.url, 'desktop');
 
         // Update with completed results
         setScanResults(prev => prev.map((result, idx) =>
-          idx === i ? {
+          idx === resultIndex ? {
             ...result,
             status: 'completed',
             mobile: mobileResult,
             desktop: desktopResult,
+            error: undefined,
           } : result
         ));
 
         // Wait 3 seconds before next URL (rate limiting)
-        if (i < selectedUrls.length - 1) {
+        if (i < urlsToScan.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 3000));
         }
       } catch (error: any) {
         console.error(`Failed to scan ${urlItem.url}:`, error);
         setScanResults(prev => prev.map((result, idx) =>
-          idx === i ? {
+          idx === resultIndex ? {
             ...result,
             status: 'error',
             error: error.message,
@@ -310,12 +411,115 @@ export default function Home() {
     }
 
     setIsScanning(false);
+    setCurrentScanDevice(null);
     console.log('Scan complete!');
   };
 
   const stopScan = () => {
     stopScanningRef.current = true;
     setIsScanning(false);
+  };
+
+  const rescanErrorUrls = async () => {
+    const errorResults = scanResults.filter(r => r.status === 'error');
+    
+    if (errorResults.length === 0) {
+      alert('No failed scans to retry');
+      return;
+    }
+
+    const confirmed = window.confirm(`Rescan ${errorResults.length} failed URL(s)?`);
+    if (!confirmed) return;
+
+    // Convert error results back to UrlItem format
+    const urlsToRescan: UrlItem[] = errorResults.map(r => ({
+      url: r.url,
+      selected: true,
+    }));
+
+    // Update status back to pending for error URLs
+    setScanResults(prev => prev.map(result => 
+      result.status === 'error' ? { ...result, status: 'pending', error: undefined } : result
+    ));
+
+    // Scroll to results
+    setTimeout(() => {
+      scanResultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+
+    await startPerformanceScanWithUrls(urlsToRescan);
+  };
+
+  const rescanSingleUrl = async (index: number) => {
+    const result = scanResults[index];
+    
+    if (!result) return;
+
+    const confirmed = window.confirm(`Rescan this URL?\n${result.url}`);
+    if (!confirmed) return;
+
+    setIsScanning(true);
+    stopScanningRef.current = false;
+    setCurrentScanIndex(index);
+
+    // Reset the specific result to pending
+    setScanResults(prev => prev.map((r, idx) =>
+      idx === index ? { url: r.url, status: 'pending' } : r
+    ));
+
+    // Scroll to results
+    setTimeout(() => {
+      scanResultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+
+    try {
+      // Update status to scanning
+      setScanResults(prev => prev.map((r, idx) =>
+        idx === index ? { ...r, status: 'scanning' } : r
+      ));
+
+      // Scan mobile
+      console.log(`Rescanning ${result.url} (mobile)...`);
+      setCurrentScanDevice('mobile');
+      const mobileResult = await scanUrl(result.url, 'mobile');
+
+      // Wait 3 seconds before desktop scan
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      if (stopScanningRef.current) {
+        setIsScanning(false);
+        setCurrentScanDevice(null);
+        return;
+      }
+
+      // Scan desktop
+      console.log(`Rescanning ${result.url} (desktop)...`);
+      setCurrentScanDevice('desktop');
+      const desktopResult = await scanUrl(result.url, 'desktop');
+
+      // Update with completed results
+      setScanResults(prev => prev.map((r, idx) =>
+        idx === index ? {
+          ...r,
+          status: 'completed',
+          mobile: mobileResult,
+          desktop: desktopResult,
+          error: undefined,
+        } : r
+      ));
+    } catch (error: any) {
+      console.error(`Failed to rescan ${result.url}:`, error);
+      setScanResults(prev => prev.map((r, idx) =>
+        idx === index ? {
+          ...r,
+          status: 'error',
+          error: error.message,
+        } : r
+      ));
+    }
+
+    setIsScanning(false);
+    setCurrentScanDevice(null);
   };
 
   const toggleIssues = (index: number) => {
@@ -620,7 +824,11 @@ ${scanResults.map(result => `
   };
 
   const selectedCount = urls.filter(item => item.selected).length;
-  const isFormValid = sitemapUrl.trim() !== '' && apiKey.trim() !== '';
+  const isFormValid =
+    apiKey.trim() !== '' &&
+    (urlInputMode === 'sitemap'
+      ? sitemapUrl.trim() !== ''
+      : manualUrlsInput.trim() !== '');
   const isSitemapChanged = scannedSitemapUrl !== sitemapUrl;
   const completedCount = scanResults.filter(r => r.status === 'completed').length;
   const errorCount = scanResults.filter(r => r.status === 'error').length;
@@ -635,48 +843,104 @@ ${scanResults.map(result => `
               PageSpeed Insights Scanner
             </h1>
             <p className="text-gray-600 dark:text-gray-300">
-              Analyze your entire website's performance through sitemap scanning
+              Analyze your website's performance via sitemap or manual URL lists
             </p>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleScan} className="space-y-6">
-            {/* Sitemap URL Field */}
-            <div>
-              <label 
-                htmlFor="sitemap-url" 
-                className="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2"
+          {/* Tabs for input mode */}
+          <div className="mb-6 border-b border-gray-200 dark:border-gray-700">
+            <nav className="flex gap-4" aria-label="URL input mode">
+              <button
+                type="button"
+                onClick={() => setUrlInputMode('sitemap')}
+                className={`pb-2 text-sm font-medium border-b-2 ${
+                  urlInputMode === 'sitemap'
+                    ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                }`}
+                disabled={isScanning || isLoadingUrls}
               >
-                Sitemap URL
-              </label>
-              <input
-                id="sitemap-url"
-                type="url"
-                value={sitemapUrl}
-                onChange={(e) => setSitemapUrl(e.target.value)}
-                placeholder="https://example.com/sitemap.xml"
-                className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white transition-all"
-                required
-                disabled={isScanning}
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Enter the full URL to your XML sitemap
-              </p>
-              
-              {/* Allow Insecure HTTPS Checkbox */}
-              <label className="mt-3 flex items-center gap-2 cursor-pointer">
+                From Sitemap
+              </button>
+              <button
+                type="button"
+                onClick={() => setUrlInputMode('manual')}
+                className={`pb-2 text-sm font-medium border-b-2 ${
+                  urlInputMode === 'manual'
+                    ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                }`}
+                disabled={isScanning || isLoadingUrls}
+              >
+                Manual URLs
+              </button>
+            </nav>
+          </div>
+
+          {/* Form */}
+          <form
+            onSubmit={urlInputMode === 'sitemap' ? handleScan : handleManualUrlsSubmit}
+            className="space-y-6"
+          >
+            {urlInputMode === 'sitemap' ? (
+              /* Sitemap URL Field */
+              <div>
+                <label 
+                  htmlFor="sitemap-url" 
+                  className="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2"
+                >
+                  Sitemap URL
+                </label>
                 <input
-                  type="checkbox"
-                  checked={allowInsecure}
-                  onChange={(e) => toggleAllowInsecure(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
+                  id="sitemap-url"
+                  type="url"
+                  value={sitemapUrl}
+                  onChange={(e) => setSitemapUrl(e.target.value)}
+                  placeholder="https://example.com/sitemap.xml"
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white transition-all"
+                  required={urlInputMode === 'sitemap'}
                   disabled={isScanning}
                 />
-                <span className="text-sm text-gray-700 dark:text-gray-300">
-                  Allow insecure HTTPS connections (self-signed/expired certificates)
-                </span>
-              </label>
-            </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Enter the full URL to your XML sitemap
+                </p>
+                
+                {/* Allow Insecure HTTPS Checkbox */}
+                <label className="mt-3 flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowInsecure}
+                    onChange={(e) => toggleAllowInsecure(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 cursor-pointer"
+                    disabled={isScanning}
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">
+                    Allow insecure HTTPS connections (self-signed/expired certificates)
+                  </span>
+                </label>
+              </div>
+            ) : (
+              /* Manual URLs Field */
+              <div>
+                <label
+                  htmlFor="manual-urls"
+                  className="block text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2"
+                >
+                  URL List
+                </label>
+                <textarea
+                  id="manual-urls"
+                  value={manualUrlsInput}
+                  onChange={(e) => setManualUrlsInput(e.target.value)}
+                  placeholder="https://example.com/&#10;https://example.com/about&#10;&#10;Or: https://example.com/, https://example.com/about"
+                  className="w-full min-h-[140px] px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white transition-all text-sm font-mono"
+                  disabled={isScanning}
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Enter one URL per line or separate multiple URLs with commas.
+                </p>
+              </div>
+            )}
 
             {/* API Key Field - [KEEPING EXISTING CODE] */}
             <div>
@@ -767,7 +1031,7 @@ ${scanResults.map(result => `
               disabled={isLoadingUrls || !isFormValid || isScanning}
               className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold py-4 px-6 rounded-lg transition-all duration-200 transform hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:transform-none shadow-lg"
             >
-              {isLoadingUrls ? (
+              {isLoadingUrls && urlInputMode === 'sitemap' ? (
                 <span className="flex items-center justify-center gap-2">
                   <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -775,8 +1039,10 @@ ${scanResults.map(result => `
                   </svg>
                   Scanning Sitemap...
                 </span>
-              ) : (
+              ) : urlInputMode === 'sitemap' ? (
                 urls.length > 0 && !isSitemapChanged ? 'Rescan Sitemap' : 'Start Scanning Sitemap'
+              ) : (
+                'Start Performance Scan'
               )}
             </button>
           </form>
@@ -809,17 +1075,17 @@ ${scanResults.map(result => `
               How it works:
             </h3>
             <ul className="text-sm text-gray-600 dark:text-gray-300 space-y-1 list-disc list-inside">
-              <li>Enter your website's sitemap URL</li>
+              <li>Choose whether to load URLs from a sitemap or enter them manually</li>
               <li>Provide your PageSpeed Insights API key</li>
-              <li>We'll extract all URLs and let you choose which to scan</li>
+              <li>Select which URLs to scan</li>
               <li>Each URL will be analyzed for performance metrics</li>
             </ul>
           </div>
         </div>
 
         {/* URL Selection Section */}
-        {urls.length > 0 && scanResults.length === 0 && (
-          <div className="mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
+        {urls.length > 0 && scanResults.length === 0 && urlInputMode === 'sitemap' && (
+          <div ref={urlSelectionRef} className="mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
                 Select URLs to Scan
@@ -873,7 +1139,7 @@ ${scanResults.map(result => `
 
         {/* Scan Results Section */}
         {scanResults.length > 0 && (
-          <div className="mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
+          <div ref={scanResultsRef} className="mt-6 bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
             {/* Warning Notice */}
             {isScanning && (
               <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400 dark:border-yellow-600 rounded-r-lg">
@@ -927,6 +1193,19 @@ ${scanResults.map(result => `
                       Export HTML
                     </button>
                   </>
+                )}
+                {/* Rescan Errors Button */}
+                {!isScanning && scanResults.some(r => r.status === 'error') && (
+                  <button
+                    onClick={rescanErrorUrls}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors duration-200 text-sm font-medium shadow-md"
+                    title="Rescan all failed URLs"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Rescan Errors ({errorCount})
+                  </button>
                 )}
                 {isScanning && (
                   <button
@@ -986,12 +1265,33 @@ ${scanResults.map(result => `
                             </span>
                           )}
                           {result.status === 'error' && (
-                            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400" title={result.error}>
-                              ✗ Error
-                            </span>
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400" title={result.error}>
+                                ✗ Error
+                              </span>
+                              {!isScanning && (
+                                <button
+                                  onClick={() => rescanSingleUrl(idx)}
+                                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                                  title="Retry this URL"
+                                >
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                  </svg>
+                                  Retry
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400">📱 Mobile</td>
+                        <td className="px-4 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400">
+                          <span className="flex items-center justify-center gap-1">
+                            📱 Mobile
+                            {result.status === 'scanning' && idx === currentScanIndex && currentScanDevice === 'mobile' && (
+                              <span className="text-blue-600 dark:text-blue-400 animate-pulse">◀</span>
+                            )}
+                          </span>
+                        </td>
                         {result.mobile ? (
                           <>
                             <td className="px-4 py-3 text-center">
@@ -1040,7 +1340,14 @@ ${scanResults.map(result => `
                       </tr>
                       {/* Desktop Row */}
                       <tr className="hover:bg-gray-50 dark:hover:bg-gray-700/50 border-b-2 border-gray-300 dark:border-gray-600">
-                        <td className="px-4 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400">💻 Desktop</td>
+                        <td className="px-4 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400">
+                          <span className="flex items-center justify-center gap-1">
+                            💻 Desktop
+                            {result.status === 'scanning' && idx === currentScanIndex && currentScanDevice === 'desktop' && (
+                              <span className="text-blue-600 dark:text-blue-400 animate-pulse">◀</span>
+                            )}
+                          </span>
+                        </td>
                         {result.desktop ? (
                           <>
                             <td className="px-4 py-3 text-center">
